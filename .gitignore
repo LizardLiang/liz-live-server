@@ -1,0 +1,5 @@
+# Dev-only test dependency (plenary.nvim) cloned by tests/minimal_init.lua
+tests/.deps/
+
+# Local Kratos pipeline artifacts and machine-local Claude settings
+.claude/

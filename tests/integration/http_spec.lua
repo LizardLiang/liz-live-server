@@ -1,0 +1,35 @@
+-- Integration: HTTP method handling, HEAD, oversized headers. TC-I07
+local H = require("tests.helpers")
+
+describe("HTTP protocol handling (TC-I07)", function()
+  it("rejects non-GET/HEAD with 405 + Allow", function()
+    H.with_server({ files = { ["index.html"] = "<body>x</body>" } }, function(ctx)
+      local r = H.request(ctx.port, "POST", "/index.html")
+      assert.equals("405", H.status(r))
+      assert.is_true(H.has_header(r, "Allow: GET, HEAD"))
+    end)
+  end)
+
+  it("HEAD returns headers (incl. post-injection Content-Length) but no body", function()
+    H.with_server({ files = { ["index.html"] = "<html><body>x</body></html>" } }, function(ctx)
+      local get = H.request(ctx.port, "GET", "/index.html")
+      local head = H.request(ctx.port, "HEAD", "/index.html")
+      assert.equals("200", H.status(head))
+      -- Content-Length identical to GET (post-injection size)
+      local get_clen = get:match("Content%-Length: (%d+)")
+      local head_clen = head:match("Content%-Length: (%d+)")
+      assert.equals(get_clen, head_clen)
+      assert.equals(#H.body(get), tonumber(head_clen))
+      -- No body on HEAD
+      assert.equals("", H.body(head))
+    end)
+  end)
+
+  it("returns 431 when headers exceed the cap with no CRLFCRLF", function()
+    H.with_server({ files = { ["index.html"] = "<body>x</body>" } }, function(ctx)
+      local payload = "GET / HTTP/1.1\r\nX-Pad: " .. string.rep("a", 40000) .. "\r\n"
+      local r = H.raw(ctx.port, payload)
+      assert.equals("431", H.status(r))
+    end)
+  end)
+end)

@@ -15,6 +15,14 @@ M.RELOAD_MSG = "reload"
 -- prefix directly in the same frame (e.g. "navigate:/B.html").
 M.NAV_PREFIX = "navigate:"
 
+-- The SSE event payload prefix that means "reload if this page depends on
+-- this path" — the targeted-reload counterpart to the global RELOAD_MSG. The
+-- changed root-relative URL path follows the prefix directly in the same
+-- frame (e.g. "reload:/style.css"). The client decides relevance by checking
+-- its own same-origin dependency set (own page + linked/scripted/imaged
+-- assets); the server never parses HTML for this.
+M.RELOAD_PREFIX = "reload:"
+
 -- One cached <script> tag (external src so the client JS is cached once, not
 -- inlined into every page — tech-spec "Key Design Decisions").
 M.script_tag = ('<script src="%s"></script>'):format(M.CLIENT_JS_PATH)
@@ -40,11 +48,46 @@ M.client_js = ([[
   var SSE_PATH = %q;
   var RELOAD_MSG = %q;
   var NAV_PREFIX = %q;
+  var RELOAD_PREFIX = %q;
   var es = null;
   var backoff = 1000;
   var BACKOFF_MAX = 10000;
   var hadDisconnect = false;
   var badge = null;
+
+  function dec(p) {
+    try { return decodeURIComponent(p); } catch (_) { return p; }
+  }
+
+  // Reload only if `changedPath` (a root-relative URL path, e.g. "/style.css")
+  // is something this page actually depends on: its own page (with
+  // directory-index equivalence) or a same-origin link/script/img asset it
+  // loaded. Known limitation (v1): assets pulled only via CSS (@import,
+  // background-image: url()) or injected dynamically after load aren't in the
+  // DOM query, so edits to those won't targeted-reload this tab.
+  function maybeReload(changedPath) {
+    var target = dec(changedPath);
+    var deps = {};
+    deps[dec(location.pathname)] = true;
+    if (location.pathname.charAt(location.pathname.length - 1) === '/') {
+      deps[dec(location.pathname + 'index.html')] = true;
+    }
+    try {
+      var els = document.querySelectorAll('link[href],script[src],img[src]');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var ref = el.getAttribute('href') || el.getAttribute('src');
+        if (!ref) continue;
+        try {
+          var url = new URL(ref, location.href);
+          if (url.origin === location.origin) {
+            deps[dec(url.pathname)] = true;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+    if (deps[target]) location.reload();
+  }
 
   function showBadge() {
     if (badge) return;
@@ -82,8 +125,9 @@ M.client_js = ([[
     };
 
     es.onmessage = function (e) {
-      if (e.data === RELOAD_MSG) location.reload();
-      else if (e.data.indexOf(NAV_PREFIX) === 0) location.href = e.data.slice(NAV_PREFIX.length);
+      if (e.data === RELOAD_MSG) { location.reload(); return; }
+      if (e.data.indexOf(RELOAD_PREFIX) === 0) { maybeReload(e.data.slice(RELOAD_PREFIX.length)); return; }
+      if (e.data.indexOf(NAV_PREFIX) === 0) location.href = e.data.slice(NAV_PREFIX.length);
     };
 
     es.onerror = function () {
@@ -98,6 +142,6 @@ M.client_js = ([[
 
   connect();
 })();
-]]):format(M.SSE_PATH, M.RELOAD_MSG, M.NAV_PREFIX)
+]]):format(M.SSE_PATH, M.RELOAD_MSG, M.NAV_PREFIX, M.RELOAD_PREFIX)
 
 return M

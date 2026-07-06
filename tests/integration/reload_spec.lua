@@ -55,7 +55,7 @@ describe("SSE transport (TC-I09)", function()
 end)
 
 describe("debounce coalescing (TC-I10)", function()
-  it("collapses a burst of triggers into one reload", function()
+  it("collapses a burst of triggers into one targeted reload frame", function()
     local sse = require("liz-live-server.sse")
     H.with_server({ files = { ["index.html"] = "<body>x</body>", ["a.html"] = "<body>a</body>" } }, function(ctx)
       local stream = H.sse_connect(ctx.port)
@@ -72,7 +72,7 @@ describe("debounce coalescing (TC-I10)", function()
         return false
       end, 20)
 
-      local _, count = stream:text():gsub("data: reload", "")
+      local _, count = stream:text():gsub("data: reload:/a%.html", "")
       assert.equals(1, count)
       stream:close()
     end)
@@ -80,7 +80,7 @@ describe("debounce coalescing (TC-I10)", function()
 end)
 
 describe("BufWritePost watch (TC-I11)", function()
-  it("reloads on save of a file under root", function()
+  it("reloads on save of a file under root, framed as the targeted reload:/path", function()
     local sse = require("liz-live-server.sse")
     H.with_server({ files = { ["index.html"] = "<body>x</body>", ["page.html"] = "<body>p</body>" } }, function(ctx)
       local stream = H.sse_connect(ctx.port)
@@ -88,7 +88,9 @@ describe("BufWritePost watch (TC-I11)", function()
         return sse.count(ctx.liz.state) >= 1
       end, 5)
       fire_bufwrite_for(ctx.root .. "/page.html")
-      assert.is_true(stream:wait_for("data: reload", 1000))
+      assert.is_true(stream:wait_for("data: reload:/page.html", 1000))
+      -- not the bare global-fallback frame
+      assert.is_false(stream:text():find("data: reload\n", 1, true) ~= nil)
       stream:close()
     end)
   end)
@@ -110,4 +112,14 @@ describe("BufWritePost watch (TC-I11)", function()
       stream:close()
     end)
   end)
+end)
+
+describe("unattributable change fallback (targeted-reload)", function()
+  -- An fs_event with no filename (pathological on some platforms/filesystems)
+  -- cannot be attributed to a URL path, so watch.lua marks the debounce window
+  -- "unknown" and init.lua falls back to the global `reload` frame. This path
+  -- is internal to watch.lua's trigger closure (not part of the public API,
+  -- and fs_event filename-omission isn't deterministically reproducible from
+  -- a test), so it is covered manually: see targeted-reload plan's
+  -- Validation section and implementation-notes.md for the manual check.
 end)

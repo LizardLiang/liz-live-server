@@ -19,6 +19,8 @@ M.state = {
   clients = {},
   watchers = {},
   watch_stopped = false, -- guard for in-flight Linux walk callbacks
+  pending_changes = nil, -- set of changed abs paths accumulated per debounce window
+  pending_unknown = nil, -- true when a change in the window couldn't be attributed to a file
   ping_timer = nil,
   debounce_timer = nil,
   error = nil,
@@ -37,6 +39,29 @@ local function resolve_root(root)
   local r = root or vim.fn.getcwd()
   r = vim.fn.fnamemodify(r, ":p")
   return uv.fs_realpath(r) or r
+end
+
+--- watch.start's on_reload callback: dispatch per the targeted-reload decision
+--- tree. Unknown/unattributable changes (or none) fall back to the global
+--- reload; otherwise broadcast one deduped targeted frame per changed path.
+--- Reads M.state directly (like M.status/M.stop) since it's the one runtime
+--- singleton.
+---@param changes string[]|nil
+---@param unknown boolean
+local function on_change(changes, unknown)
+  local st = M.state
+  if unknown or not changes then
+    sse.broadcast(st, inject.RELOAD_MSG)
+    return
+  end
+  local seen = {}
+  for _, real in ipairs(changes) do
+    local url = browser.path_for_file(st.root, real)
+    if url and not seen[url] then
+      seen[url] = true
+      sse.broadcast(st, inject.RELOAD_PREFIX .. url)
+    end
+  end
 end
 
 --- Merge user options into config.
@@ -79,9 +104,7 @@ function M.start()
 
   -- SSE keep-alive, and the watch -> debounce -> broadcast pipeline.
   sse.start_ping(st, opts.ping_ms)
-  watch.start(st, opts, function()
-    sse.broadcast(st, inject.RELOAD_MSG)
-  end)
+  watch.start(st, opts, on_change)
 
   local path = browser.compute_path(st.root)
   local url = browser.url(st.host, st.port, path)

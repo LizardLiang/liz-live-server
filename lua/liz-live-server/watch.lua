@@ -53,8 +53,8 @@ local function add_watcher(state, dir, opts, trigger)
       if err then
         return
       end
+      local full = filename and (static.strip_sep(dir) .. "/" .. filename) or nil
       if filename and events and events.rename then
-        local full = static.strip_sep(dir) .. "/" .. filename
         uv.fs_stat(full, function(serr, st)
           if state.watch_stopped then
             return
@@ -64,7 +64,7 @@ local function add_watcher(state, dir, opts, trigger)
           end
         end)
       end
-      trigger()
+      trigger(full)
     end)
   end)
   -- Re-check the guard: stop() may have run during the synchronous start above.
@@ -106,12 +106,33 @@ end
 
 --- Build the debounced trigger closure. Coalesces multi-chunk saves, formatter
 --- re-saves, and the autocmd+fs_event double-fire into one reload (FR-011).
+--- Accumulates changed-file identity across the debounce window: `path`
+--- (absolute, real-pathed) is recorded per call; a call with no path (an
+--- unattributable fs_event) marks the whole window unknown, which forces the
+--- safe global-reload fallback on fire.
 ---@param state table
 ---@param opts table
----@param on_reload fun()
----@return fun() trigger
+---@param on_reload fun(changes:string[]|nil, unknown:boolean)
+---@return fun(path:string|nil) trigger
 local function make_trigger(state, opts, on_reload)
-  return function()
+  state.pending_changes = {}
+  state.pending_unknown = false
+  return function(path)
+    -- Guard against a late fs_event callback landing after watch.stop() has
+    -- niled out pending_changes/pending_unknown (most reachable on Windows
+    -- IOCP). Covers all four call sites uniformly (BufWritePost, win/mac
+    -- recursive fs_event, Linux add_watcher, and the rename->walk
+    -- continuation) instead of guarding each individually.
+    if state.watch_stopped then
+      return
+    end
+    if path then
+      local real = uv.fs_realpath(path) or path
+      state.pending_changes[real] = true
+    else
+      state.pending_unknown = true
+    end
+
     local t = state.debounce_timer
     if not t then
       t = uv.new_timer()
@@ -119,15 +140,25 @@ local function make_trigger(state, opts, on_reload)
     end
     t:stop()
     t:start(opts.debounce_ms, 0, function()
-      on_reload()
+      local changes = {}
+      for p in pairs(state.pending_changes) do
+        changes[#changes + 1] = p
+      end
+      local unknown = state.pending_unknown
+      state.pending_changes = {}
+      state.pending_unknown = false
+      on_reload(#changes > 0 and changes or nil, unknown)
     end)
   end
 end
 
---- Start watching. `on_reload` is invoked (debounced) on any detected change.
+--- Start watching. `on_reload(changes, unknown)` is invoked (debounced) on any
+--- detected change: `changes` is the deduped array of absolute real paths
+--- accumulated over the debounce window (nil if none), and `unknown` is true
+--- if any change in the window arrived without an identifiable path.
 ---@param state table runtime state (uses state.root; fills state.watchers, state.debounce_timer)
 ---@param opts table config (debounce_ms, ignore_dirs)
----@param on_reload fun()
+---@param on_reload fun(changes:string[]|nil, unknown:boolean)
 function M.start(state, opts, on_reload)
   state.watchers = { events = {}, augroup = nil }
   state.watch_stopped = false
@@ -146,7 +177,7 @@ function M.start(state, opts, on_reload)
       end
       local real = uv.fs_realpath(file) or file
       if static.under_root(real, state.root) then
-        trigger()
+        trigger(real)
       end
     end,
   })
@@ -156,9 +187,14 @@ function M.start(state, opts, on_reload)
     local h = uv.new_fs_event()
     if h then
       local ok = pcall(function()
-        h:start(state.root, { recursive = true }, function(err)
-          if not err then
-            trigger()
+        h:start(state.root, { recursive = true }, function(err, filename)
+          if err then
+            return
+          end
+          if filename then
+            trigger(static.strip_sep(state.root) .. "/" .. filename)
+          else
+            trigger(nil)
           end
         end)
       end)
@@ -202,6 +238,8 @@ function M.stop(state)
     end
     state.debounce_timer = nil
   end
+  state.pending_changes = nil
+  state.pending_unknown = nil
 end
 
 return M

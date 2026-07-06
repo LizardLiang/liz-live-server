@@ -9,6 +9,30 @@ local M = {}
 -- (Markdown is rendered as pretty HTML by the server — see markdown.lua).
 local PREVIEWABLE = { html = true, htm = true, md = true, markdown = true }
 
+--- Map an absolute real path under `root` to its root-relative URL path
+--- (per-segment percent-encoded). Returns nil if not under root. Extension-
+--- agnostic: unlike compute_path, this does NOT apply the PREVIEWABLE filter,
+--- so css/js/img assets map too (needed for targeted reload matching).
+---@param root string
+---@param real string
+---@return string|nil path
+function M.path_for_file(root, real)
+  if not static.under_root(real, root) then
+    return nil
+  end
+  -- Build root-relative path with per-segment percent-encoding. Strip any
+  -- extended-length prefix from BOTH sides so the length-based slice aligns on
+  -- Windows; case differences don't shift the offset (length-preserving).
+  local r = static.strip_ext_prefix(static.to_slash(real))
+  local base = static.strip_sep(static.strip_ext_prefix(static.to_slash(root)))
+  local rel = r:sub(#base + 2) -- drop "base/"
+  local parts = {}
+  for seg in rel:gmatch("[^/]+") do
+    parts[#parts + 1] = static.url_encode(seg)
+  end
+  return "/" .. table.concat(parts, "/")
+end
+
 --- Compute the request path to open: if the current buffer is a servable HTML
 --- or Markdown file under root, open that file; otherwise open the site root "/".
 ---@param root string
@@ -26,17 +50,7 @@ function M.compute_path(root)
   if not ext or not PREVIEWABLE[ext:lower()] then
     return "/"
   end
-  -- Build root-relative path with per-segment percent-encoding. Strip any
-  -- extended-length prefix from BOTH sides so the length-based slice aligns on
-  -- Windows; case differences don't shift the offset (length-preserving).
-  local r = static.strip_ext_prefix(static.to_slash(real))
-  local base = static.strip_sep(static.strip_ext_prefix(static.to_slash(root)))
-  local rel = r:sub(#base + 2) -- drop "base/"
-  local parts = {}
-  for seg in rel:gmatch("[^/]+") do
-    parts[#parts + 1] = static.url_encode(seg)
-  end
-  return "/" .. table.concat(parts, "/")
+  return M.path_for_file(root, real)
 end
 
 --- Build the full http URL for a path.

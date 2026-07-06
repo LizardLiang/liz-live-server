@@ -1,4 +1,5 @@
--- Integration: port auto-increment, start/stop/toggle, notify, no-leak.
+-- Integration: port auto-increment, start/stop/toggle, notify, open_current
+-- navigation, no-leak.
 -- TC-I08, TC-I12, TC-I13, TC-I18
 local H = require("tests.helpers")
 local fresh_liz = H.fresh_liz
@@ -153,6 +154,77 @@ describe("non-loopback host warning (FR-009)", function()
     vim.notify = orig
     assert.is_true(ok, tostring(err))
     assert.is_true(warned)
+  end)
+end)
+
+describe("open_current (navigate-current-buffer delta)", function()
+  local function connect_and_wait_for_client(liz)
+    liz.start()
+    local port = liz.status().port
+    local stream = H.sse_connect(port)
+    vim.wait(1000, function()
+      return liz.status().clients >= 1
+    end, 5)
+    return stream
+  end
+
+  it("starts the server when stopped, opening the current buffer's page", function()
+    local root = H.tmproot({ ["index.html"] = "<body>x</body>", ["A.html"] = "<body>a</body>" })
+    local liz = fresh_liz(root, { port = H.free_port(8900), open = false })
+    vim.cmd("edit " .. vim.fn.fnameescape(root .. "/A.html"))
+    assert.is_false(liz.status().running)
+    liz.open_current()
+    assert.is_true(liz.status().running)
+    liz.stop()
+  end)
+
+  it("steers an already-connected tab via SSE navigate, without restarting", function()
+    local root = H.tmproot({ ["index.html"] = "<body>x</body>", ["B.html"] = "<body>b</body>" })
+    local liz = fresh_liz(root, { port = H.free_port(8910), open = false })
+    local stream = connect_and_wait_for_client(liz)
+
+    vim.cmd("edit " .. vim.fn.fnameescape(root .. "/B.html"))
+    liz.open_current()
+
+    assert.is_true(stream:wait_for("data: navigate:/B.html", 1000))
+    assert.is_true(liz.status().running) -- no restart / no new server
+    stream:close()
+    liz.stop()
+  end)
+
+  it("navigates a connected tab to / for a non-previewable active buffer", function()
+    local root = H.tmproot({ ["index.html"] = "<body>x</body>", ["mod.lua"] = "return 1" })
+    local liz = fresh_liz(root, { port = H.free_port(8920), open = false })
+    local stream = connect_and_wait_for_client(liz)
+
+    vim.cmd("edit " .. vim.fn.fnameescape(root .. "/mod.lua"))
+    liz.open_current()
+
+    assert.is_true(stream:wait_for("data: navigate:/", 1000))
+    stream:close()
+    liz.stop()
+  end)
+
+  it("falls back to browser.open when no SSE clients are connected", function()
+    local browser = require("liz-live-server.browser")
+    local root = H.tmproot({ ["index.html"] = "<body>x</body>", ["B.html"] = "<body>b</body>" })
+    local liz = fresh_liz(root, { port = H.free_port(8930), open = false })
+    liz.start()
+    vim.cmd("edit " .. vim.fn.fnameescape(root .. "/B.html"))
+
+    local called_url
+    local orig = browser.open
+    browser.open = function(url) ---@diagnostic disable-line: duplicate-set-field
+      called_url = url
+    end
+
+    assert.equals(0, liz.status().clients)
+    liz.open_current()
+
+    browser.open = orig
+    assert.is_not_nil(called_url)
+    assert.truthy(called_url:find("/B.html", 1, true))
+    liz.stop()
   end)
 end)
 

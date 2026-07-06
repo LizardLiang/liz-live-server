@@ -116,6 +116,26 @@ function M.toggle()
   end
 end
 
+--- Open or navigate the live tab to the current buffer's page:
+--- - stopped -> start() (which already opens the current buffer's page)
+--- - running + no SSE clients -> open a new system tab (browser.open fallback)
+--- - running + >=1 SSE client -> steer the open tab(s) via SSE, no restart
+function M.open_current()
+  local st = M.state
+  if not st.running then
+    M.start()
+    return
+  end
+  local path = browser.compute_path(st.root)
+  if sse.count(st) == 0 then
+    notify("opening " .. path)
+    browser.open(browser.url(st.host, st.port, path))
+    return
+  end
+  sse.broadcast(st, inject.NAV_PREFIX .. path)
+  notify("navigated to " .. path)
+end
+
 --- Machine-readable status (for scripting/tests).
 ---@return table { running, port, clients, error }
 function M.status()

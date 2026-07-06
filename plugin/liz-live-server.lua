@@ -22,6 +22,10 @@ vim.api.nvim_create_user_command("LiveServerToggle", function()
   liz().toggle()
 end, { desc = "Toggle the HTML live server" })
 
+vim.api.nvim_create_user_command("LiveServerOpenCurrent", function()
+  liz().open_current()
+end, { desc = "Open or navigate the live tab to the current buffer" })
+
 -- Clean teardown so no listen socket / watcher / timer leaks on exit (FR-010).
 vim.api.nvim_create_autocmd("VimLeavePre", {
   group = vim.api.nvim_create_augroup("LizLiveServerLifecycle", { clear = true }),

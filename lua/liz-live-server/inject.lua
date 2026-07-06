@@ -10,6 +10,11 @@ M.CLIENT_JS_PATH = "/__liz_reload.js"
 -- server (sse.broadcast) and the injected client below. One source of truth.
 M.RELOAD_MSG = "reload"
 
+-- The SSE event payload prefix that means "navigate to this path" — steers an
+-- already-open tab to a new page without a full reload. The path follows the
+-- prefix directly in the same frame (e.g. "navigate:/B.html").
+M.NAV_PREFIX = "navigate:"
+
 -- One cached <script> tag (external src so the client JS is cached once, not
 -- inlined into every page — tech-spec "Key Design Decisions").
 M.script_tag = ('<script src="%s"></script>'):format(M.CLIENT_JS_PATH)
@@ -34,6 +39,7 @@ M.client_js = ([[
 (function () {
   var SSE_PATH = %q;
   var RELOAD_MSG = %q;
+  var NAV_PREFIX = %q;
   var es = null;
   var backoff = 1000;
   var BACKOFF_MAX = 10000;
@@ -77,6 +83,7 @@ M.client_js = ([[
 
     es.onmessage = function (e) {
       if (e.data === RELOAD_MSG) location.reload();
+      else if (e.data.indexOf(NAV_PREFIX) === 0) location.href = e.data.slice(NAV_PREFIX.length);
     };
 
     es.onerror = function () {
@@ -91,6 +98,6 @@ M.client_js = ([[
 
   connect();
 })();
-]]):format(M.SSE_PATH, M.RELOAD_MSG)
+]]):format(M.SSE_PATH, M.RELOAD_MSG, M.NAV_PREFIX)
 
 return M

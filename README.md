@@ -29,7 +29,11 @@ save** — no Node, no external runtime, no polling.
 ```lua
 {
   "liz/liz-live-server",
-  cmd = { "LiveServerStart", "LiveServerStop", "LiveServerToggle" },
+  cmd = { "LiveServerStart", "LiveServerStop", "LiveServerToggle", "LiveServerOpenCurrent" },
+  keys = {
+    -- Recommended: rebind <leader>P from toggle to open-current (start-or-navigate).
+    { "<leader>P", "<cmd>LiveServerOpenCurrent<cr>", desc = "Live-server: open/navigate to current buffer" },
+  },
   opts = {}, -- calls require("liz-live-server").setup(opts)
 }
 ```
@@ -50,11 +54,12 @@ use({
 
 ## Usage
 
-| Command               | Action                          |
-| --------------------- | ------------------------------- |
-| `:LiveServerStart`    | Start the server (opens browser) |
-| `:LiveServerStop`     | Stop the server                 |
-| `:LiveServerToggle`   | Toggle on/off                   |
+| Command                  | Action                                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------------- |
+| `:LiveServerStart`       | Start the server (opens browser)                                                                  |
+| `:LiveServerStop`        | Stop the server                                                                                    |
+| `:LiveServerToggle`      | Toggle on/off                                                                                      |
+| `:LiveServerOpenCurrent` | Open the live tab on the current buffer, or navigate it there if already open (start-or-navigate) |
 
 On start, the server binds `127.0.0.1:5500` (or the next free port), serves the
 current working directory (or `root`), and opens your browser. If the current
@@ -62,6 +67,23 @@ buffer is an HTML or Markdown file under the root, that page opens directly;
 otherwise the site root opens. Every served HTML page (and every rendered
 Markdown page) gets a tiny reload script injected automatically — just **save**
 any file under the root and the browser refreshes.
+
+### `:LiveServerOpenCurrent`
+
+Start-or-navigate semantics, depending on server state:
+
+- **Stopped** → starts the server (same as `:LiveServerStart`, opening the
+  current buffer's page).
+- **Running, with an open live tab** → steers the already-open tab(s) to the
+  current buffer's page over the existing SSE connection — no restart, no new
+  tab.
+- **Running, but no tab is currently connected** → opens a new system browser
+  tab on the current buffer's page (same fallback as start).
+
+Recommended: rebind `<leader>P` from `:LiveServerToggle` to
+`:LiveServerOpenCurrent` (see the lazy.nvim `keys` example above) so one key
+always gets you to the current file's live preview without juggling
+start/stop.
 
 ### Markdown
 
@@ -95,10 +117,11 @@ require("liz-live-server").setup({
 ```lua
 local liz = require("liz-live-server")
 
-liz.start()    -- :LiveServerStart
-liz.stop()     -- :LiveServerStop
-liz.toggle()   -- :LiveServerToggle
-liz.status()   -- { running, port, clients, error }
+liz.start()         -- :LiveServerStart
+liz.stop()          -- :LiveServerStop
+liz.toggle()        -- :LiveServerToggle
+liz.open_current()  -- :LiveServerOpenCurrent
+liz.status()        -- { running, port, clients, error }
 ```
 
 ## lualine

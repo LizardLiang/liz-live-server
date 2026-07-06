@@ -4,6 +4,7 @@
 local uv = vim.uv or vim.loop
 local static = require("liz-live-server.static")
 local inject = require("liz-live-server.inject")
+local markdown = require("liz-live-server.markdown")
 local sse = require("liz-live-server.sse")
 
 local M = {}
@@ -83,10 +84,16 @@ local function send_error(client, code, is_head)
 end
 
 --- Serve a known file path: read, MIME, inject reload script into HTML, write.
+--- Markdown files are wrapped in an HTML shell that renders them client-side
+--- (markdown.shell already carries the reload script) and served as text/html.
 local function serve_file(client, path, is_head)
   static.read(path, function(err, data)
     if err or not data then
       return send_error(client, 500, is_head)
+    end
+    if markdown.is_markdown(path) then
+      local body = markdown.shell(data, path)
+      return write_close(client, build_response(200, "text/html; charset=utf-8", body, is_head))
     end
     local mime = static.mime(path)
     local body = data
@@ -145,6 +152,14 @@ local function route(state, client, method, target)
     return write_close(
       client,
       build_response(200, "application/javascript; charset=utf-8", inject.client_js, is_head)
+    )
+  end
+
+  -- Markdown renderer JS route (cached; referenced by markdown.shell pages).
+  if path == markdown.CLIENT_JS_PATH then
+    return write_close(
+      client,
+      build_response(200, "application/javascript; charset=utf-8", markdown.client_js, is_head)
     )
   end
 

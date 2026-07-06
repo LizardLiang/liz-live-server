@@ -56,6 +56,29 @@ describe("static serving", function()
     end)
   end)
 
+  it("renders Markdown as live-reloading HTML, and serves the renderer JS", function()
+    H.with_server({ files = { ["README.md"] = "# Title\n\nsome **text**." } }, function(ctx)
+      local r = H.request(ctx.port, "GET", "/README.md")
+      assert.equals("200", H.status(r))
+      -- served as HTML, not raw text/markdown
+      assert.is_true(H.has_header(r, "Content-Type: text/html"))
+      local body = H.body(r)
+      assert.truthy(body:find("window.__LIZ_MD", 1, true))
+      assert.truthy(body:find("/__liz_md.js", 1, true))
+      -- live-reload script is present so the page reloads on save
+      assert.truthy(body:find("__liz_reload.js", 1, true))
+      -- Content-Length matches the shell body
+      local clen = tonumber(r:match("Content%-Length: (%d+)"))
+      assert.equals(#body, clen)
+
+      -- the renderer JS route serves JS
+      local js = H.request(ctx.port, "GET", "/__liz_md.js")
+      assert.equals("200", H.status(js))
+      assert.is_true(H.has_header(js, "Content-Type: application/javascript"))
+      assert.truthy(H.body(js):find("__liz_md_root", 1, true))
+    end)
+  end)
+
   it("directory: index, listing, and 404 (TC-I05)", function()
     H.with_server({
       files = {

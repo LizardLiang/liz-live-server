@@ -5,8 +5,12 @@ local static = require("liz-live-server.static")
 
 local M = {}
 
+-- Extensions whose buffer opens directly to its own page: HTML plus Markdown
+-- (Markdown is rendered as pretty HTML by the server — see markdown.lua).
+local PREVIEWABLE = { html = true, htm = true, md = true, markdown = true }
+
 --- Compute the request path to open: if the current buffer is a servable HTML
---- file under root, open that file; otherwise open the site root "/".
+--- or Markdown file under root, open that file; otherwise open the site root "/".
 ---@param root string
 ---@return string path
 function M.compute_path(root)
@@ -19,12 +23,14 @@ function M.compute_path(root)
     return "/"
   end
   local ext = real:match("%.([%w]+)$")
-  if not ext or not (ext:lower() == "html" or ext:lower() == "htm") then
+  if not ext or not PREVIEWABLE[ext:lower()] then
     return "/"
   end
-  -- Build root-relative path with per-segment percent-encoding.
-  local r = static.to_slash(real)
-  local base = static.strip_sep(static.to_slash(root))
+  -- Build root-relative path with per-segment percent-encoding. Strip any
+  -- extended-length prefix from BOTH sides so the length-based slice aligns on
+  -- Windows; case differences don't shift the offset (length-preserving).
+  local r = static.strip_ext_prefix(static.to_slash(real))
+  local base = static.strip_sep(static.strip_ext_prefix(static.to_slash(root)))
   local rel = r:sub(#base + 2) -- drop "base/"
   local parts = {}
   for seg in rel:gmatch("[^/]+") do

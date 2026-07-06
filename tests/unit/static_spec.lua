@@ -51,6 +51,29 @@ describe("static.under_root (TC-U02)", function()
     assert.is_true(static.under_root("C:\\root\\x", "C:\\root"))
     assert.is_false(static.under_root("C:\\rootx", "C:\\root"))
   end)
+
+  it("normalizes extended-length prefixes on one side", function()
+    -- fs_realpath may return \\?\ on Windows for one operand but not the other.
+    assert.is_true(static.under_root("\\\\?\\C:\\root\\x", "C:\\root"))
+    assert.is_true(static.under_root("C:\\root\\x", "\\\\?\\C:\\root"))
+  end)
+
+  it("matches case-insensitively only on Windows", function()
+    local is_win = (vim.fn.has("win32") == 1) or (vim.fn.has("win64") == 1)
+    if is_win then
+      assert.is_true(static.under_root("C:\\Root\\X", "c:\\root"))
+    else
+      assert.is_false(static.under_root("/Root/x", "/root"))
+    end
+  end)
+end)
+
+describe("static.strip_ext_prefix", function()
+  it("strips a leading //?/ prefix, leaves others alone", function()
+    assert.equals("C:/root", static.strip_ext_prefix("//?/C:/root"))
+    assert.equals("C:/root", static.strip_ext_prefix("C:/root"))
+    assert.equals("/a/b", static.strip_ext_prefix("/a/b"))
+  end)
 end)
 
 describe("static.mime (TC-U03)", function()

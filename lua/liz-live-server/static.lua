@@ -4,6 +4,11 @@ local uv = vim.uv or vim.loop
 
 local M = {}
 
+-- Windows filesystems are case-insensitive and libuv's fs_realpath can return an
+-- extended-length "\\?\" prefix and/or a different drive-letter case than
+-- getcwd/buffer names. Detected once at load (the OS never changes mid-session).
+local IS_WINDOWS = (vim.fn.has("win32") == 1) or (vim.fn.has("win64") == 1)
+
 -- Default mode for opened files (rw-r--r--). Lua has no octal literals.
 local FILE_MODE_644 = tonumber("644", 8)
 
@@ -114,13 +119,41 @@ function M.normalize_lexical(urlpath)
   return table.concat(parts, "/")
 end
 
---- True if `candidate` is `root` itself or lives under `root`.
+--- Strip a leading Windows extended-length prefix ("\\?\" -> "//?/" after
+--- slash-normalization). Applied to both operands before a length-based slice
+--- so the offsets line up regardless of whether fs_realpath added the prefix.
+---@param p string already slash-normalized
+---@return string
+function M.strip_ext_prefix(p)
+  return (p:gsub("^//%?/", ""))
+end
+
+--- Canonicalize a path for prefix comparison: normalize separators, strip any
+--- extended-length prefix, strip trailing slashes, and (on Windows only)
+--- lowercase — because the filesystem is case-insensitive there. Length is NOT
+--- preserved (the prefix strip shortens), so callers slicing by length must use
+--- strip_ext_prefix directly, not canon.
+---@param p string
+---@return string
+local function canon(p)
+  p = M.strip_ext_prefix(to_slash(p))
+  p = p:gsub("/+$", "") -- strip trailing slashes
+  if IS_WINDOWS then
+    p = p:lower()
+  end
+  return p
+end
+M.canon = canon
+
+--- True if `candidate` is `root` itself or lives under `root`. Comparison is
+--- case-insensitive on Windows and prefix/separator-normalized, so a buffer
+--- genuinely under root is never misclassified as outside it (and the security
+--- jail is not bypassable via case-variant paths on a case-insensitive FS).
 ---@param candidate string
 ---@param root string
 ---@return boolean
 function M.under_root(candidate, root)
-  local c, r = to_slash(candidate), to_slash(root)
-  r = r:gsub("/+$", "") -- strip trailing slash from root
+  local c, r = canon(candidate), canon(root)
   if c == r then
     return true
   end

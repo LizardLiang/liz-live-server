@@ -9,6 +9,10 @@ save** — no Node, no external runtime, no polling.
 - Reloads on **both** Neovim saves (`BufWritePost`) and **external** file
   changes (`fs_event`), coalesced through one 50 ms debounce.
 - One command to start, auto browser-open, port `5500` with auto-increment.
+- **Markdown preview**: `.md`/`.markdown` files render as pretty, live-reloading
+  HTML — GitHub-flavored (tables, task lists, strikethrough), syntax-highlighted
+  code, and light/dark theme that follows your browser. Rendered by a small
+  first-party client script — no CDN, no external tool, fully offline.
 - Resilient reload client: "disconnected" badge + auto-reconnect with backoff,
   and a resync reload when the connection comes back.
 - Optional [lualine](https://github.com/nvim-lualine/lualine.nvim) component —
@@ -54,9 +58,20 @@ use({
 
 On start, the server binds `127.0.0.1:5500` (or the next free port), serves the
 current working directory (or `root`), and opens your browser. If the current
-buffer is an HTML file under the root, that page opens directly; otherwise the
-site root opens. Every served HTML page gets a tiny reload script injected
-automatically — just **save** any file under the root and the browser refreshes.
+buffer is an HTML or Markdown file under the root, that page opens directly;
+otherwise the site root opens. Every served HTML page (and every rendered
+Markdown page) gets a tiny reload script injected automatically — just **save**
+any file under the root and the browser refreshes.
+
+### Markdown
+
+Requesting a `.md`/`.markdown` file serves an HTML page that renders it in the
+browser via a bundled first-party script (`/__liz_md.js`). Supported: headings,
+emphasis, links, images, ordered/unordered and task lists, GFM tables,
+strikethrough, blockquotes, horizontal rules, and fenced code blocks with a
+generic (language-agnostic) syntax highlighter. The theme follows
+`prefers-color-scheme`. Raw HTML inside Markdown is escaped and shown literally
+(not executed).
 
 ## Configuration
 
@@ -126,10 +141,11 @@ lualine_x = {
   `sse.broadcast("reload")`.
 - `sse.lua` holds the open browser connections and pushes the `reload` event.
 
-## Scope (v1)
+## Scope
 
-Static files only. No preprocessing/bundling, no HMR/CSS hot-swap (full-page
-reload), no remote/LAN hosting, no HTTPS, no auth — localhost-only by design.
+Static files, plus client-side Markdown preview. No source preprocessing/bundling
+(SCSS/TS/JSX served verbatim), no HMR/CSS hot-swap (full-page reload), no
+remote/LAN hosting, no HTTPS, no auth — localhost-only by design.
 
 ## License
 

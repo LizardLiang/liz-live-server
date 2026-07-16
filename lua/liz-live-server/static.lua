@@ -313,10 +313,12 @@ function M.listing_html(dirpath, urlpath, cb)
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Index of %s</title>
 <style>
-body{font-family:system-ui,sans-serif;margin:2rem;color:#222}
+:root{--fg:#222;--bg:#fff;--link:#0b66c3}
+@media (prefers-color-scheme: dark){:root{--fg:#e6edf3;--bg:#0d1117;--link:#4493f8}}
+body{font-family:system-ui,sans-serif;margin:2rem;color:var(--fg);background:var(--bg)}
 h1{font-size:1.1rem;font-weight:600}
 ul{list-style:none;padding:0;line-height:1.8}
-a{text-decoration:none;color:#0b66c3}
+a{text-decoration:none;color:var(--link)}
 a:hover{text-decoration:underline}
 </style>
 </head>

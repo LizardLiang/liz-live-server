@@ -1,5 +1,6 @@
 -- Unit: static.lua pure logic (path jail, MIME, url enc/dec). TC-U01..U05
 local static = require("liz-live-server.static")
+local H = require("tests.helpers")
 
 describe("static.normalize_lexical (TC-U01)", function()
   it("drops '.' and resolves '..'", function()
@@ -99,6 +100,26 @@ describe("static.is_html (TC-U04)", function()
     assert.is_true(static.is_html("text/html; charset=utf-8"))
     assert.is_false(static.is_html("text/css; charset=utf-8"))
     assert.is_false(static.is_html("application/javascript"))
+  end)
+end)
+
+describe("static.listing_html (dark theme support)", function()
+  it("wires prefers-color-scheme dark CSS vars, no hardcoded light color", function()
+    local root = H.tmproot({})
+
+    local html, err
+    static.listing_html(root, "/", function(e, h)
+      err, html = e, h
+    end)
+    vim.wait(2000, function()
+      return html ~= nil or err ~= nil
+    end, 5)
+
+    assert.is_nil(err)
+    assert.truthy(html)
+    assert.truthy(html:find("prefers-color-scheme", 1, true))
+    assert.truthy(html:find("var(--fg)", 1, true))
+    assert.is_nil(html:find("color:#222", 1, true))
   end)
 end)
 

@@ -12,6 +12,11 @@ local M = {}
 -- browser fetches it once instead of inlining it into every Markdown page).
 M.CLIENT_JS_PATH = "/__liz_md.js"
 
+-- Single source of truth for the persisted-theme localStorage key, shared by
+-- the no-flash <head> script and client_js (spliced into both below) so the
+-- two independently-embedded contexts can never drift out of sync.
+local THEME_STORAGE_KEY = "liz-md-theme"
+
 --- True if the path is a Markdown file (case-insensitive extension).
 ---@param path string
 ---@return boolean
@@ -58,6 +63,14 @@ function M.shell(raw, path)
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     "<title>" .. esc(title) .. "</title>",
+    -- No-flash theme pin: read the persisted theme and set data-theme on
+    -- <html> before any stylesheet loads, so the page never flashes the
+    -- wrong palette on load. Swallows storage errors (e.g. private
+    -- browsing) and any value other than 'light'/'dark' as a no-op, leaving
+    -- the CSS auto/OS-preference rules in control.
+    ("<script>try{var t=localStorage.getItem('%s');"
+      .. "if(t==='light'||t==='dark')document.documentElement.setAttribute('data-theme',t);"
+      .. "}catch(e){}</script>"):format(THEME_STORAGE_KEY),
     "</head>",
     "<body>",
     '<article id="__liz_md_root"></article>',
@@ -394,11 +407,60 @@ M.client_js = [==[
     document.head.appendChild(st);
   }
 
+  // ---- theme toggle (auto -> light -> dark -> auto), persisted -----------
+  // "auto" clears data-theme so the prefers-color-scheme CSS rules decide;
+  // "light"/"dark" pin an explicit override. All three states (including
+  // "auto") are written to localStorage on click, mirroring what the
+  // no-flash <head> script reads. localStorage access is wrapped in
+  // try/catch because private-mode/disabled-storage throws rather than
+  // returning null -- failures degrade silently to "auto".
+  var THEME_KEY = [==THEME_KEY==];
+  var THEME_ORDER = ["auto", "light", "dark"];
+  var THEME_LABEL = { auto: "🌗 auto", light: "☀︎ light", dark: "☾ dark" };
+  var themeBtn = null;
+
+  function readTheme() {
+    try {
+      var v = window.localStorage.getItem(THEME_KEY);
+      if (v === "light" || v === "dark" || v === "auto") return v;
+    } catch (e) { /* private mode / disabled storage: fall back to auto */ }
+    return "auto";
+  }
+
+  function writeTheme(v) {
+    try { window.localStorage.setItem(THEME_KEY, v); } catch (e) { /* ignore */ }
+  }
+
+  function applyTheme(mode) {
+    if (mode === "light" || mode === "dark") {
+      document.documentElement.setAttribute("data-theme", mode);
+    } else {
+      document.documentElement.removeAttribute("data-theme");
+    }
+    if (themeBtn) themeBtn.textContent = THEME_LABEL[mode] || THEME_LABEL.auto;
+  }
+
+  function mountThemeToggle() {
+    themeBtn = document.createElement("button");
+    themeBtn.id = "__liz_theme_toggle";
+    themeBtn.type = "button";
+    var current = readTheme();
+    themeBtn.onclick = function () {
+      var idx = THEME_ORDER.indexOf(readTheme());
+      var next = THEME_ORDER[(idx + 1) % THEME_ORDER.length];
+      writeTheme(next);
+      applyTheme(next);
+    };
+    document.body.appendChild(themeBtn);
+    applyTheme(current);
+  }
+
   function boot() {
     var root = document.getElementById("__liz_md_root");
     if (!root) return;
     try { root.innerHTML = render(src); }
     catch (e) { root.innerHTML = "<pre>" + esc(src) + "</pre>"; }
+    mountThemeToggle();
   }
 
   injectCss();
@@ -417,11 +479,16 @@ local CSS = [=[
   --tok-comment:#59636e; --tok-string:#0a3069; --tok-number:#0550ae; --tok-keyword:#cf222e;
 }
 @media (prefers-color-scheme: dark){
-  :root{
+  :root:not([data-theme]){
     --fg:#e6edf3; --bg:#0d1117; --muted:#9198a1; --border:#3d444d;
     --code-bg:#151b23; --link:#4493f8; --quote-bar:#3d444d;
     --tok-comment:#9198a1; --tok-string:#a5d6ff; --tok-number:#79c0ff; --tok-keyword:#ff7b72;
   }
+}
+:root[data-theme="dark"]{
+  --fg:#e6edf3; --bg:#0d1117; --muted:#9198a1; --border:#3d444d;
+  --code-bg:#151b23; --link:#4493f8; --quote-bar:#3d444d;
+  --tok-comment:#9198a1; --tok-string:#a5d6ff; --tok-number:#79c0ff; --tok-keyword:#ff7b72;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
@@ -455,12 +522,23 @@ th,td{border:1px solid var(--border);padding:.4em .8em} th{background:var(--code
 .liz-ghost-body{white-space:pre-wrap;font-size:.9em;line-height:1.5}
 .liz-ghost-body a{color:var(--link)}
 .liz-ghost-inline{color:var(--muted);font-style:italic;opacity:.75}
+#__liz_theme_toggle{position:fixed;top:12px;right:12px;z-index:2147483646;
+  font:600 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+  background:var(--code-bg);color:var(--fg);border:1px solid var(--border);
+  border-radius:8px;padding:6px 10px;cursor:pointer;opacity:.85}
+#__liz_theme_toggle:hover{opacity:1}
 ]=]
 
 -- Splice the stylesheet into the client JS as a JS string literal (JSON-encoded
 -- so newlines/quotes are safe, then "<" defused like the embedded source).
 M.client_js = M.client_js:gsub("%[==CSS==%]", function()
   return (vim.json.encode(CSS):gsub("<", "\\u003C"))
+end)
+
+-- Splice the shared theme-storage-key constant into client_js the same way,
+-- so it and the <head> no-flash script can never drift apart.
+M.client_js = M.client_js:gsub("%[==THEME_KEY==%]", function()
+  return vim.json.encode(THEME_STORAGE_KEY)
 end)
 
 return M

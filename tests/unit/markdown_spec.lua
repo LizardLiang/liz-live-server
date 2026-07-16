@@ -31,6 +31,14 @@ describe("markdown.shell", function()
     assert.truthy(out:find("<title>README.md</title>", 1, true))
   end)
 
+  it("pins the persisted theme before first paint (no-flash head script)", function()
+    local out = markdown.shell("# hi", "/README.md")
+    local head = out:match("<head>(.-)</head>")
+    assert.truthy(head)
+    assert.truthy(head:find("localStorage.getItem('liz-md-theme')", 1, true))
+    assert.truthy(head:find("setAttribute('data-theme'", 1, true))
+  end)
+
   -- The JSON literal sits between `window.__LIZ_MD=` and the shell's own
   -- `;</script>` closer. Because embed() escapes every "<" to <, the
   -- literal can never itself contain `;</script>`, so this capture is exact.
@@ -40,10 +48,11 @@ describe("markdown.shell", function()
 
   it("neutralizes a literal </script> in the source (no breakout)", function()
     local out = markdown.shell("text </script><script>alert(1)</script> more", "/x.md")
-    -- Shell emits exactly three legit </script> closers regardless of content;
-    -- a breakout would push the count higher.
+    -- Shell emits exactly four legit </script> closers regardless of content
+    -- (no-flash theme script, embedded-source script, renderer <script src>,
+    -- reload script tag); a breakout would push the count higher.
     local _, count = out:gsub("</script>", "")
-    assert.equals(3, count)
+    assert.equals(4, count)
     local json = embedded_json(out)
     assert.truthy(json)
     assert.is_nil(json:find("<", 1, true))
@@ -81,6 +90,18 @@ describe("markdown.client_js", function()
     assert.truthy(js:find("prefers-color-scheme", 1, true))
     -- the CSS placeholder was substituted (no template token remains)
     assert.is_nil(js:find("[==CSS==]", 1, true))
+  end)
+
+  it("scopes prefers-color-scheme dark to auto mode and pins an explicit dark override", function()
+    assert.truthy(js:find(':root:not([data-theme])', 1, true))
+    -- CSS is JSON-encoded before splicing into the JS string literal, so the
+    -- embedded double-quotes come through backslash-escaped.
+    assert.truthy(js:find(':root[data-theme=\\"dark\\"]', 1, true))
+  end)
+
+  it("ships a persisted theme toggle button", function()
+    assert.truthy(js:find("__liz_theme_toggle", 1, true))
+    assert.truthy(js:find("liz-md-theme", 1, true))
   end)
 
   it("renders HTML comments as ghost callouts instead of leaking markers", function()

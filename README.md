@@ -92,8 +92,9 @@ browser via a bundled first-party script (`/__liz_md.js`). Supported: headings,
 emphasis, links, images, ordered/unordered and task lists, GFM tables,
 strikethrough, blockquotes, horizontal rules, and fenced code blocks with a
 generic (language-agnostic) syntax highlighter. The theme follows
-`prefers-color-scheme`. Raw HTML inside Markdown is escaped and shown literally
-(not executed).
+`prefers-color-scheme` by default; a button in the top-right corner cycles the
+theme (auto → light → dark) and remembers your choice across reloads. Raw HTML
+inside Markdown is escaped and shown literally (not executed).
 
 ## Configuration
 

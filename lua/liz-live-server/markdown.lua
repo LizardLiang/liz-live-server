@@ -84,6 +84,32 @@ M.client_js = [==[
     return esc(s).replace(/"/g, "&quot;");
   }
 
+  // Given text that starts immediately AFTER an opening "<!--", locate the
+  // matching "-->". Returns { closed, body, tail }: when closed, `body` is
+  // the comment content and `tail` is whatever trailing text follows "-->"
+  // on the same line/string — callers must re-parse `tail`, never drop it.
+  // When unterminated, `body` is all of `text` and `tail` is "".
+  function findCommentEnd(text) {
+    var closeIdx = text.indexOf("-->");
+    if (closeIdx < 0) return { closed: false, body: text, tail: "" };
+    return { closed: true, body: text.slice(0, closeIdx), tail: text.slice(closeIdx + 3) };
+  }
+
+  // Escape text and autolink bare http(s) URLs, preserving newlines. Used for
+  // ghost-comment bodies (block card + inline span) so raw comment text can
+  // never break out of the DOM while still surfacing clickable links.
+  function linkifyEscaped(text) {
+    var re = /https?:\/\/[^\s<]+/g;
+    var out = "", last = 0, m;
+    while ((m = re.exec(text))) {
+      out += esc(text.slice(last, m.index));
+      out += '<a href="' + escAttr(m[0]) + '">' + esc(m[0]) + "</a>";
+      last = m.index + m[0].length;
+    }
+    out += esc(text.slice(last));
+    return out;
+  }
+
   // ---- generic, language-agnostic syntax highlighter ----------------------
   // One tokenizer for ALL fenced code regardless of the ```lang tag: it colors
   // comments, strings, numbers, and a shared keyword set. Not grammar-perfect
@@ -150,6 +176,14 @@ M.client_js = [==[
     var out = "", i = 0, n = text.length, m;
     while (i < n) {
       var c = text.charAt(i);
+      // inline HTML comment -> ghost span
+      if (c === "<" && text.slice(i, i + 4) === "<!--") {
+        var cr = findCommentEnd(text.slice(i + 4));
+        if (cr.closed) {
+          out += '<span class="liz-ghost-inline">' + linkifyEscaped(cr.body.trim()) + "</span>";
+          i += 4 + cr.body.length + 3; continue;
+        }
+      }
       // inline code `code`
       if (c === "`") {
         var j = text.indexOf("`", i + 1);
@@ -188,7 +222,7 @@ M.client_js = [==[
   // ---- block helpers ------------------------------------------------------
   function isBlank(s) { return /^\s*$/.test(s); }
   function isBlockStart(s) {
-    return /^\s*(#{1,6}\s|>|```|~~~|([-*+]|\d+[.)])\s)/.test(s) ||
+    return /^\s*(#{1,6}\s|>|```|~~~|<!--|([-*+]|\d+[.)])\s)/.test(s) ||
       /^\s*([-*_])(\s*\1){2,}\s*$/.test(s);
   }
   function splitRow(line) {
@@ -259,6 +293,36 @@ M.client_js = [==[
         }
         html.push('<pre class="liz-code"><code' + (lang ? ' data-lang="' + escAttr(lang) + '"' : "") +
           ">" + highlight(buf.join("\n")) + "</code></pre>");
+        continue;
+      }
+
+      // HTML comment -> ghost callout card
+      if (/^\s*<!--/.test(line)) {
+        var openIdx = line.indexOf("<!--");
+        var r = findCommentEnd(line.slice(openIdx + 4));
+        var bodyLines;
+        if (r.closed) {
+          bodyLines = [r.body];
+          i++;
+          // Never drop text trailing "-->" on the closing line — re-feed it
+          // as a new line so it still gets parsed as normal block content.
+          if (!isBlank(r.tail)) lines.splice(i, 0, r.tail);
+        } else {
+          bodyLines = [r.body]; i++;
+          while (i < lines.length) {
+            var r2 = findCommentEnd(lines[i]);
+            if (r2.closed) {
+              bodyLines.push(r2.body);
+              i++;
+              if (!isBlank(r2.tail)) lines.splice(i, 0, r2.tail);
+              break;
+            }
+            bodyLines.push(lines[i]); i++;
+          }
+        }
+        var ghostBody = bodyLines.join("\n").trim();
+        html.push('<div class="liz-ghost-card"><div class="liz-ghost-label">💬 comment</div><div class="liz-ghost-body">' +
+          linkifyEscaped(ghostBody) + "</div></div>");
         continue;
       }
 
@@ -384,6 +448,13 @@ th,td{border:1px solid var(--border);padding:.4em .8em} th{background:var(--code
 .tok-string{color:var(--tok-string)}
 .tok-number{color:var(--tok-number)}
 .tok-keyword{color:var(--tok-keyword)}
+.liz-ghost-card{background:var(--code-bg);border:1px solid var(--border);
+  border-radius:8px;padding:.6em .9em;margin:0 0 1em;color:var(--muted)}
+.liz-ghost-label{font-size:.75em;letter-spacing:.03em;color:var(--muted);
+  margin-bottom:.35em;opacity:.85}
+.liz-ghost-body{white-space:pre-wrap;font-size:.9em;line-height:1.5}
+.liz-ghost-body a{color:var(--link)}
+.liz-ghost-inline{color:var(--muted);font-style:italic;opacity:.75}
 ]=]
 
 -- Splice the stylesheet into the client JS as a JS string literal (JSON-encoded

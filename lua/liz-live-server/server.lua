@@ -5,6 +5,7 @@ local uv = vim.uv or vim.loop
 local static = require("liz-live-server.static")
 local inject = require("liz-live-server.inject")
 local markdown = require("liz-live-server.markdown")
+local mermaid = require("liz-live-server.mermaid")
 local sse = require("liz-live-server.sse")
 
 local M = {}
@@ -160,6 +161,21 @@ local function route(state, client, method, target)
     return write_close(
       client,
       build_response(200, "application/javascript; charset=utf-8", markdown.client_js, is_head)
+    )
+  end
+
+  -- Mermaid bundle route. Served from the fetch-once local cache, never from a
+  -- CDN. When nothing is cached this 404s on purpose: the Markdown renderer
+  -- treats the failed <script> load as "not installed" and leaves the diagram
+  -- source as a plain code block.
+  if path == mermaid.CLIENT_JS_PATH then
+    local bundle = mermaid.read()
+    if not bundle then
+      return send_error(client, 404, is_head)
+    end
+    return write_close(
+      client,
+      build_response(200, "application/javascript; charset=utf-8", bundle, is_head)
     )
   end
 

@@ -6,6 +6,7 @@ local sse = require("liz-live-server.sse")
 local watch = require("liz-live-server.watch")
 local browser = require("liz-live-server.browser")
 local inject = require("liz-live-server.inject")
+local mermaid = require("liz-live-server.mermaid")
 
 local M = {}
 
@@ -159,14 +160,33 @@ function M.open_current()
   notify("navigated to " .. path)
 end
 
+--- Download the Mermaid bundle into the local cache. One-time setup: until it
+--- runs, ```mermaid fences in the Markdown preview stay plain code blocks.
+--- Open pages pick the bundle up on their next reload -- no server restart.
+function M.fetch_mermaid()
+  if mermaid.is_available() then
+    notify("mermaid already cached at " .. mermaid.cache_path() .. " (re-downloading)")
+  else
+    notify("fetching mermaid from " .. mermaid.url())
+  end
+  mermaid.fetch(function(ok, detail)
+    if ok then
+      notify("mermaid ready: " .. detail .. " -- reload any open Markdown page")
+    else
+      notify("mermaid fetch failed: " .. detail, vim.log.levels.ERROR)
+    end
+  end)
+end
+
 --- Machine-readable status (for scripting/tests).
----@return table { running, port, clients, error }
+---@return table { running, port, clients, error, mermaid }
 function M.status()
   return {
     running = M.state.running,
     port = M.state.port,
     clients = sse.count(M.state),
     error = M.state.error,
+    mermaid = mermaid.is_available(),
   }
 end
 

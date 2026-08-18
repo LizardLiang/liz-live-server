@@ -104,6 +104,18 @@ describe("markdown.client_js", function()
     assert.truthy(js:find("liz-md-theme", 1, true))
   end)
 
+  it("routes ```mermaid fences to a locally-served diagram bundle", function()
+    assert.truthy(js:find("liz-mermaid", 1, true))
+    -- the bundle route placeholder was substituted with mermaid.lua's constant
+    assert.truthy(js:find('"/__liz_mermaid.js"', 1, true))
+    assert.is_nil(js:find("[==MERMAID_PATH==]", 1, true))
+    -- a page render must never reach a CDN; missing bundle -> install hint
+    assert.is_nil(js:find("cdn.jsdelivr.net", 1, true))
+    assert.truthy(js:find("LiveServerFetchMermaid", 1, true))
+    -- theme changes re-render diagrams (mermaid bakes colors into the SVG)
+    assert.truthy(js:find("restyleMermaid", 1, true))
+  end)
+
   it("renders HTML comments as ghost callouts instead of leaking markers", function()
     assert.truthy(js:find("liz-ghost-card", 1, true))
     assert.truthy(js:find("liz-ghost-inline", 1, true))

@@ -13,6 +13,10 @@ save** — no Node, no external runtime, no polling.
   HTML — GitHub-flavored (tables, task lists, strikethrough), syntax-highlighted
   code, and light/dark theme that follows your browser. Rendered by a small
   first-party client script — no CDN, no external tool, fully offline.
+- **Mermaid diagrams**: `` ```mermaid `` fences render as diagrams once you
+  run `:LiveServerFetchMermaid` — a one-time download into your Neovim data
+  directory, served from your own localhost afterwards. Until you fetch it,
+  those fences stay ordinary code blocks.
 - Resilient reload client: "disconnected" badge + auto-reconnect with backoff,
   and a resync reload when the connection comes back.
 - Optional [lualine](https://github.com/nvim-lualine/lualine.nvim) component —
@@ -29,7 +33,13 @@ save** — no Node, no external runtime, no polling.
 ```lua
 {
   "liz/liz-live-server",
-  cmd = { "LiveServerStart", "LiveServerStop", "LiveServerToggle", "LiveServerOpenCurrent" },
+  cmd = {
+    "LiveServerStart",
+    "LiveServerStop",
+    "LiveServerToggle",
+    "LiveServerOpenCurrent",
+    "LiveServerFetchMermaid",
+  },
   keys = {
     -- Recommended: rebind <leader>P from toggle to open-current (start-or-navigate).
     { "<leader>P", "<cmd>LiveServerOpenCurrent<cr>", desc = "Live-server: open/navigate to current buffer" },
@@ -60,6 +70,7 @@ use({
 | `:LiveServerStop`        | Stop the server                                                                                    |
 | `:LiveServerToggle`      | Toggle on/off                                                                                      |
 | `:LiveServerOpenCurrent` | Open the live tab on the current buffer, or navigate it there if already open (start-or-navigate) |
+| `:LiveServerFetchMermaid` | Download the Mermaid bundle once, enabling diagram rendering in the Markdown preview |
 
 On start, the server binds `127.0.0.1:5500` (or the next free port), serves the
 current working directory (or `root`), and opens your browser. If the current
@@ -96,6 +107,36 @@ generic (language-agnostic) syntax highlighter. The theme follows
 theme (auto → light → dark) and remembers your choice across reloads. Raw HTML
 inside Markdown is escaped and shown literally (not executed).
 
+#### Mermaid diagrams
+
+Fence a diagram with `` ```mermaid `` and it renders as SVG:
+
+````markdown
+```mermaid
+graph TD;
+  A[Save file] --> B{md?};
+  B -->|yes| C[render];
+  B -->|no| D[reload];
+```
+````
+
+Mermaid is ~3.5 MB of third-party JavaScript, so the plugin does not ship it and
+never loads it from a CDN. Fetch it once:
+
+```vim
+:LiveServerFetchMermaid
+```
+
+That downloads the bundle to
+`stdpath("data")/liz-live-server/mermaid.min.js` and serves it from your own
+localhost at `/__liz_mermaid.js`. Reload any open Markdown page and diagrams
+appear — no server restart, and no network traffic on later page loads.
+
+Before you fetch it, a `` ```mermaid `` fence renders as a normal highlighted
+code block with a one-line hint. The same fallback covers a diagram that fails
+to parse: you keep the source you wrote, plus Mermaid's error message. Diagrams
+follow the page theme and re-render when you flip the toggle.
+
 ## Configuration
 
 Defaults:
@@ -110,6 +151,12 @@ require("liz-live-server").setup({
   debounce_ms = 50,    -- coalesce save bursts into one reload
   ping_ms = 30000,     -- SSE keep-alive interval
   ignore_dirs = { ".git", "node_modules" }, -- pruned from the Linux watch walk
+
+  mermaid = {
+    version = "11",   -- npm specifier used to build the download URL
+    url = nil,        -- full URL override (skips `version`)
+    cache_path = nil, -- nil -> stdpath("data")/liz-live-server/mermaid.min.js
+  },
 })
 ```
 
@@ -122,7 +169,8 @@ liz.start()         -- :LiveServerStart
 liz.stop()          -- :LiveServerStop
 liz.toggle()        -- :LiveServerToggle
 liz.open_current()  -- :LiveServerOpenCurrent
-liz.status()        -- { running, port, clients, error }
+liz.fetch_mermaid() -- :LiveServerFetchMermaid (async; notifies on completion)
+liz.status()        -- { running, port, clients, error, mermaid }
 ```
 
 ## lualine
@@ -164,10 +212,15 @@ lualine_x = {
   macOS/Windows; a pruned per-directory walk on Linux), debounces, and calls
   `sse.broadcast("reload")`.
 - `sse.lua` holds the open browser connections and pushes the `reload` event.
+- `mermaid.lua` owns the fetch-once bundle cache and the `/__liz_mermaid.js`
+  route. The route 404s while nothing is cached, which is what makes the
+  renderer fall back to code blocks instead of failing.
 
 ## Scope
 
-Static files, plus client-side Markdown preview. No source preprocessing/bundling
+Static files, plus client-side Markdown preview. The only network access the
+plugin ever makes is the explicit `:LiveServerFetchMermaid` download; serving
+and rendering are offline. No source preprocessing/bundling
 (SCSS/TS/JSX served verbatim), no HMR/CSS hot-swap (full-page reload), no
 remote/LAN hosting, no HTTPS, no auth — localhost-only by design.
 

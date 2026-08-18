@@ -5,6 +5,7 @@
 -- generic syntax highlighting happen in the browser; the shell carries the
 -- normal live-reload <script> so Markdown pages reload on save like HTML.
 local inject = require("liz-live-server.inject")
+local mermaid = require("liz-live-server.mermaid")
 
 local M = {}
 
@@ -304,8 +305,12 @@ M.client_js = [==[
           if (cl && cl[1].charAt(0) === marker && cl[1].length >= minlen) { i++; break; }
           buf.push(lines[i]); i++;
         }
-        html.push('<pre class="liz-code"><code' + (lang ? ' data-lang="' + escAttr(lang) + '"' : "") +
-          ">" + highlight(buf.join("\n")) + "</code></pre>");
+        var block = '<pre class="liz-code"><code' + (lang ? ' data-lang="' + escAttr(lang) + '"' : "") +
+          ">" + highlight(buf.join("\n")) + "</code></pre>";
+        // ```mermaid -> diagram container. The highlighted source stays INSIDE
+        // it as the fallback body; mountMermaid reads it back via textContent
+        // and swaps in an SVG only once the bundle loads and the graph parses.
+        html.push(/^mermaid$/i.test(lang) ? '<div class="liz-mermaid">' + block + "</div>" : block);
         continue;
       }
 
@@ -398,6 +403,141 @@ M.client_js = [==[
     return html.join("\n");
   }
 
+  // ---- mermaid diagrams ---------------------------------------------------
+  // The bundle is served from OUR origin at MERMAID_PATH (the fetch-once local
+  // cache), and only requested when the page actually holds a ```mermaid
+  // fence. If the route 404s -- nothing fetched yet -- the <script> errors and
+  // every diagram just stays the code block it already is, plus one hint line
+  // telling the reader how to install it. No page render ever hits a CDN.
+  var MERMAID_PATH = [==MERMAID_PATH==];
+  var mermaidNodes = [];
+  var mermaidReady = false;
+  var mermaidSeq = 0;
+
+  // Theme actually in effect right now: the pinned override if the toggle set
+  // one, otherwise whatever prefers-color-scheme resolves to.
+  function effectiveTheme() {
+    var pinned = document.documentElement.getAttribute("data-theme");
+    if (pinned === "light" || pinned === "dark") return pinned;
+    try {
+      if (window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches) return "dark";
+    } catch (e) { /* no matchMedia: assume light */ }
+    return "light";
+  }
+
+  function mermaidNote(el, text) {
+    var prev = el.querySelector(".liz-mermaid-note");
+    if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+    var note = document.createElement("div");
+    note.className = "liz-mermaid-note";
+    note.textContent = text;
+    el.appendChild(note);
+  }
+
+  // Put the container back to its code-block form. Used when a diagram fails
+  // to parse, so the reader still sees the source they wrote.
+  function showSource(el) {
+    el.className = "liz-mermaid";
+    el.innerHTML = "";
+    var pre = document.createElement("pre");
+    pre.className = "liz-code";
+    var code = document.createElement("code");
+    code.setAttribute("data-lang", "mermaid");
+    code.innerHTML = highlight(el.__lizSrc || "");
+    pre.appendChild(code);
+    el.appendChild(pre);
+  }
+
+  // Some mermaid builds leave a scratch node behind in <body> when a graph
+  // fails to parse; drop it so failures don't accumulate stray DOM. `keep` is
+  // the diagram's own container: mermaid names the finished <svg> with the
+  // SAME id it used for the scratch node, so without this guard a successful
+  // render would delete the SVG it had just inserted.
+  function dropScratch(id, keep) {
+    var ids = [id, "d" + id];
+    for (var k = 0; k < ids.length; k++) {
+      var n = document.getElementById(ids[k]);
+      if (!n || !n.parentNode) continue;
+      if (keep && (keep === n || (keep.contains && keep.contains(n)))) continue;
+      n.parentNode.removeChild(n);
+    }
+  }
+
+  function renderOne(el) {
+    var id = "liz-mermaid-" + ++mermaidSeq;
+    function done(svg) {
+      el.innerHTML = svg;
+      el.className = "liz-mermaid liz-mermaid-ok";
+      dropScratch(id, el);
+    }
+    function fail(err) {
+      showSource(el);
+      mermaidNote(el, "\u26A0 mermaid: " + ((err && err.message) || err || "could not render this diagram"));
+      dropScratch(id, el);
+    }
+    try {
+      var out = window.mermaid.render(id, el.__lizSrc || "");
+      if (out && typeof out.then === "function") out.then(function (r) { done(r.svg); }, fail);
+      else if (out && typeof out.svg === "string") done(out.svg);
+      else if (typeof out === "string") done(out);
+      else fail("unexpected mermaid response");
+    } catch (e) { fail(e); }
+  }
+
+  // Re-initialize with the current theme, then re-render every diagram from
+  // its saved source. Also the theme-change path: mermaid bakes colors into
+  // the SVG, so a palette switch means a full re-render, not a CSS swap.
+  function renderAll() {
+    if (!mermaidReady) return;
+    try {
+      window.mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        suppressErrorRendering: true,
+        theme: effectiveTheme() === "dark" ? "dark" : "default"
+      });
+    } catch (e) { /* older builds may reject a key: render with what stuck */ }
+    for (var k = 0; k < mermaidNodes.length; k++) renderOne(mermaidNodes[k]);
+  }
+
+  function restyleMermaid() {
+    if (mermaidReady) renderAll();
+  }
+
+  function mountMermaid() {
+    var nodes = document.querySelectorAll(".liz-mermaid");
+    if (!nodes.length) return;
+    for (var k = 0; k < nodes.length; k++) {
+      var el = nodes[k], code = el.querySelector("code");
+      el.__lizSrc = code ? code.textContent : "";
+      mermaidNodes.push(el);
+    }
+    var s = document.createElement("script");
+    s.src = MERMAID_PATH;
+    s.onerror = function () {
+      for (var k = 0; k < mermaidNodes.length; k++) {
+        mermaidNote(mermaidNodes[k], "mermaid not installed \u2014 run :LiveServerFetchMermaid in Neovim, then reload");
+      }
+    };
+    s.onload = function () {
+      if (!window.mermaid || typeof window.mermaid.render !== "function") return s.onerror();
+      mermaidReady = true;
+      renderAll();
+    };
+    document.head.appendChild(s);
+  }
+
+  // In auto mode the OS palette can flip while the page is open; diagrams have
+  // to be re-rendered to follow it (the toggle path goes through applyTheme).
+  function watchSystemTheme() {
+    try {
+      var mq = window.matchMedia("(prefers-color-scheme: dark)");
+      var onChange = function () { if (readTheme() === "auto") restyleMermaid(); };
+      if (mq.addEventListener) mq.addEventListener("change", onChange);
+      else if (mq.addListener) mq.addListener(onChange);
+    } catch (e) { /* no matchMedia: nothing to follow */ }
+  }
+
   // ---- styles -------------------------------------------------------------
   var CSS = [==CSS==];
 
@@ -438,6 +578,7 @@ M.client_js = [==[
       document.documentElement.removeAttribute("data-theme");
     }
     if (themeBtn) themeBtn.textContent = THEME_LABEL[mode] || THEME_LABEL.auto;
+    restyleMermaid();
   }
 
   function mountThemeToggle() {
@@ -461,6 +602,8 @@ M.client_js = [==[
     try { root.innerHTML = render(src); }
     catch (e) { root.innerHTML = "<pre>" + esc(src) + "</pre>"; }
     mountThemeToggle();
+    mountMermaid();
+    watchSystemTheme();
   }
 
   injectCss();
@@ -522,6 +665,12 @@ th,td{border:1px solid var(--border);padding:.4em .8em} th{background:var(--code
 .liz-ghost-body{white-space:pre-wrap;font-size:.9em;line-height:1.5}
 .liz-ghost-body a{color:var(--link)}
 .liz-ghost-inline{color:var(--muted);font-style:italic;opacity:.75}
+.liz-mermaid{margin:0 0 1em}
+.liz-mermaid.liz-mermaid-ok{display:flex;justify-content:center;background:var(--code-bg);
+  border:1px solid var(--border);border-radius:8px;padding:1em;overflow:auto}
+.liz-mermaid.liz-mermaid-ok pre.liz-code{display:none}
+.liz-mermaid svg{max-width:100%;height:auto}
+.liz-mermaid-note{font-size:.8em;color:var(--muted);margin-top:.4em}
 #__liz_theme_toggle{position:fixed;top:12px;right:12px;z-index:2147483646;
   font:600 13px/1 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
   background:var(--code-bg);color:var(--fg);border:1px solid var(--border);
@@ -539,6 +688,12 @@ end)
 -- so it and the <head> no-flash script can never drift apart.
 M.client_js = M.client_js:gsub("%[==THEME_KEY==%]", function()
   return vim.json.encode(THEME_STORAGE_KEY)
+end)
+
+-- Same treatment for the Mermaid bundle route: mermaid.lua owns the path, the
+-- client renderer only gets told where to look.
+M.client_js = M.client_js:gsub("%[==MERMAID_PATH==%]", function()
+  return vim.json.encode(mermaid.CLIENT_JS_PATH)
 end)
 
 return M

@@ -11,6 +11,16 @@ M.defaults = {
   debounce_ms = 50, -- FR-011 coalesce window
   ping_ms = 30000, -- SSE keep-alive interval
   ignore_dirs = { ".git", "node_modules" }, -- fs_event Linux-walk pruning
+
+  -- Mermaid diagram support in the Markdown preview. The bundle is NOT shipped
+  -- with the plugin: `:LiveServerFetchMermaid` downloads it once into
+  -- `cache_path`, after which rendering is fully offline. Until then ```mermaid
+  -- fences render as ordinary code blocks.
+  mermaid = {
+    version = "11", -- npm specifier used to build the default download URL
+    url = nil, -- full URL override (skips `version`)
+    cache_path = nil, -- nil -> stdpath("data")/liz-live-server/mermaid.min.js
+  },
 }
 
 -- Active config; starts as a copy of defaults, replaced by setup().
